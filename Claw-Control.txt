@@ -1,0 +1,187 @@
+/*This program reads an analogue input and produce a 
+ * proportional Servo response.
+The analogue value is transmited via Serial communication
+*/
+#include <Servo.h>
+Servo MyServo;
+//Variable Declaration
+
+ //PINs
+ int AInput7 = 7;      //Analog Input pin A7 Band Position Control
+ int AInput5 = 5;      //Analog Input pin A5 Sesorial position Feedback
+ int PWMOutput = 11;    //PWM Output pin 11 Sesorial feedback
+ int ServOut = 10;    //Servo signal connected to pin D10
+ int DirPIN = 3;      //Digital Pin to change direction
+ int CalPIN = 4;      //Digital Pin to start the calibration protocol     
+ int ledPIN = 13;     //Digital Pin with a led
+ //Global Variables
+ /**Position Control**/
+ int AValueCtrl = 0;
+ float RMS = 0;
+ int ServAng = 0;
+ int DeltaAng=0; //add/dim servo's angle 
+ int counter=0; //use to calculate Signal's RMS value
+ /**Sensorial Feedback**/
+ int PWMDuty = 0; //Duty to control the vibrating motor
+ int AValueFbk = 0;   //analogue value read from the analogue channel
+ int NSample=1;    //counts to calculate the average
+ float AnaAverg=0; //to calculate the average of the last 10 samples
+ volatile int dir=-1; //to choose direction negative: close; positive: open;
+ /**Code Timing**/ 
+ int TimeIni = 0;
+ int TimeEnd = 0;
+ int DeltaT = 0;
+ bool Active = false;
+ 
+void setup() {
+  // put your setup code here, to run once:
+  //Activate serial transmision
+  Serial.begin(115200);
+  //set analog referece for the ADC
+  analogReference(DEFAULT);
+  //Pin Setup
+  pinMode(A5, INPUT); //Used for the control signal
+  pinMode(A7, INPUT);//Used for the feedback signal
+  pinMode(ServOut, OUTPUT);//Claw psoition control
+  
+  //Servo Setup
+  MyServo.attach(ServOut);
+  MyServo.write(40); //Initial position, Widely Open
+
+  //Interrupts Setup
+  attachInterrupt(digitalPinToInterrupt(DirPIN),ButtonRed,FALLING);
+  attachInterrupt(digitalPinToInterrupt(CalPIN),ButtonBlack,FALLING);
+  
+}//End Setup
+
+void loop() {
+/******Position Control******/  
+   //Read a Value from the sensor:
+  AValueCtrl = analogRead(AInput7);
+  //Serial.println(AValueCtrl);
+  RMS = 0;
+
+  if (AValueCtrl>=550){
+      TimeIni = millis();
+      for (counter=0; counter<=100; counter++)
+      { RMS = RMS + AValueCtrl;
+     // Serial.print(RMS);Serial.print(", ");
+      Serial.println(AValueCtrl);
+     // Serial.println(counter);
+      delay(5);
+      AValueCtrl = analogRead(AInput7);
+      if (AValueCtrl<550) {
+          break;
+          };
+        };
+   TimeEnd = millis();
+   DeltaT= TimeEnd-TimeIni; 
+//   Serial.print("Delta T =  ");Serial.println(DeltaT);    
+   RMS = RMS*(counter+1)*(0.001);
+   Serial.print("RMS =  ");Serial.print(RMS);Serial.print("/");Serial.println(counter);
+   DeltaAng = 0.01*RMS;
+   Serial.print("DeltaAng= ");Serial.println(DeltaAng);
+   ServAng = ServAng + (DeltaAng*dir);
+     if(ServAng>40){
+      ServAng = 40;
+      }; //Can't open wider!
+      if(ServAng<0){
+      ServAng = 0;
+      }; //Can't close narrower!
+   MyServo.write(ServAng);
+  Serial.print("ServAng= ");Serial.println(ServAng); 
+  }
+/******End Position Control******/ 
+
+/******Sensory Feedback Control******/ 
+
+//Digital Low-pass Filter:
+//Reads 10 values from the AInput, and take the average:
+//Sampling rate, 5ms
+AnaAverg = 0;
+for(int NSample=1; NSample<=20; NSample++){
+  //Read a Value from the sensor:
+  AValueFbk = analogRead(AInput5);
+  AnaAverg = AnaAverg + AValueFbk;
+  delay(5); 
+  };
+  AnaAverg = AnaAverg/20;
+/**End Digital Low-pass Filter  ********/  
+
+  // Escale value:
+  PWMDuty = 0.25*AnaAverg + 25;
+  if (PWMDuty<60) PWMDuty=70; //Min value that can be felt
+  if (PWMDuty>255) PWMDuty=255;//Max value in the motor
+ //Send the PMW value to the motor:
+  analogWrite(PWMOutput, PWMDuty);
+  // Print value via serial
+  Serial.print("Position= ");Serial.print(AnaAverg);Serial.print(", ");
+  Serial.print("Duty= ");Serial.println(PWMDuty);
+/******End Sensory Feedback Control******/ 
+
+}//End Loop
+
+//Interruption Routine Service - Red Button
+//When the button is pressed, the direction of the claw changes from opening to closing
+//and viceverse
+void ButtonRed(){
+  dir*=-1;
+    if(dir<0){
+      Serial.println("closing");
+      }
+      else{
+       Serial.println("opening"); 
+        };
+  };//End Button Red
+
+//Interruption Routine Service - Black Button
+//When the button is pressed, the configuration mode for the feedback starts
+void ButtonBlack(){
+  
+  int Value = 0;
+   
+      //Blink three times, to start calibration
+      digitalWrite(ledPIN, LOW);
+      delay(500);
+      digitalWrite(ledPIN, HIGH); //1
+      delay(300);
+      digitalWrite(ledPIN, LOW);
+      delay(300);
+      digitalWrite(ledPIN, HIGH);  //2
+      delay(300);
+      digitalWrite(ledPIN, LOW);
+      delay(300);
+      digitalWrite(ledPIN, HIGH);  //3
+      delay(300);
+      digitalWrite(ledPIN, LOW);
+      /**************************************/
+          do{
+            //Read the analogue port and change resistance in Zero Pot until it reaches 200 counts
+            Value = analogRead(AInput5);
+            delay(100);
+            }while(Value!=200);
+            
+            //Blink once to continue calibration
+            digitalWrite(ledPIN, HIGH); //1
+            delay(300);
+            digitalWrite(ledPIN, LOW);
+            delay(300);
+            /**********************************/
+            do{
+            //Read the analogue port and change resistance in Span Pot until it reaches 950 counts
+            Value = analogRead(AInput5);
+            delay(100);
+            }while(Value!=950);
+            
+            //Blink Twice to finish calibration
+            digitalWrite(ledPIN, HIGH); //1
+            delay(300);
+            digitalWrite(ledPIN, LOW);
+            delay(300);
+            digitalWrite(ledPIN, HIGH); //2
+            delay(300);
+            digitalWrite(ledPIN, LOW);
+            delay(300);
+            /**********************************/
+   loop();//Starts main program again
+  };//End Black Red
